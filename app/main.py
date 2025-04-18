@@ -1,6 +1,6 @@
 import numpy as np
 from datetime import datetime, timedelta
-import joblib
+import joblib, os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
@@ -10,12 +10,15 @@ class ParkingForecaster:
         self.models = {}  # Dictionary to store a model for each parking lot
         self.scalers = {}  # Dictionary to store scalers for each parking lot
 
-    def load_models(self, folder_path):
+    def load_models(self):
         """Load trained models and scalers from disk"""
         park_ids = [4,8,9,10,20,29,30,31,46,47,62,67,71,72,73,75,76,77,78,80,81,82,84,85,86,87,88,89,90,92,93,94,95,96,97,98,99,101,102,103,104,105,106,108,109,113,114,]
+        base_path = os.path.dirname(__file__)       
         for park_id in park_ids:
-            self.models[park_id] = joblib.load(f"{folder_path}/model_park_{park_id}.pkl")
-            self.scalers[park_id] = joblib.load(f"{folder_path}/scaler_park_{park_id}.pkl")
+            model_path = os.path.join(base_path, "models", f"model_park_{park_id}.pkl")
+            scaler_path = os.path.join(base_path, "models", f"scaler_park_{park_id}.pkl")
+            self.models[park_id] = joblib.load(model_path)
+            self.scalers[park_id] = joblib.load(scaler_path)
 
     def predict_trend(self, target_datetime, park_id, recent_data, intervals=[30, 60]):
         """
@@ -111,7 +114,7 @@ class ParkingForecaster:
 async def lifespan(app: FastAPI):
     # Startup event
     app.state.forecaster = ParkingForecaster()
-    app.state.forecaster.load_models("models/")
+    app.state.forecaster.load_models()
     yield
     # Shutdown event (optional cleanup)
     del app.state.forecaster
