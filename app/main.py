@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import joblib, os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 
 class ParkingForecaster:
@@ -120,8 +121,15 @@ async def lifespan(app: FastAPI):
     del app.state.forecaster
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http:localhost:3000","https://next-parking.vercel.app"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/api/py/forecast")
+@app.get("/api/forecast")
 def forecast(id: str, current_ava: int):
     """
     Forecast available parking spaces for a given parking lot ID and current available spaces.
