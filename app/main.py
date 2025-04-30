@@ -86,8 +86,8 @@ class ParkingForecaster:
             future_prediction = self.models[park_id].predict(X_future_scaled)[0]
 
             # Calculate trend (positive means more available spaces, negative means fewer)
-            trend = future_prediction - prev_spaces
-            #trend_percentage = (trend / prev_spaces) * 100 if prev_spaces > 0 else 0
+            trend = round(future_prediction - prev_spaces)
+            #trend_percentage = math.ceil((trend / prev_spaces) * 100 if prev_spaces > 0 else 0)
 
             if trend > 0:
                 trend_description = "emptier"
