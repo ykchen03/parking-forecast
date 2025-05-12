@@ -1,123 +1,56 @@
-import numpy as np
-from datetime import datetime, timedelta
+import pandas as pd
+from datetime import datetime
 import joblib, os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 
-class ParkingForecaster:
+class Forecaster:
     def __init__(self):
-        self.models = {}  # Dictionary to store a model for each parking lot
-        self.scalers = {}  # Dictionary to store scalers for each parking lot
+        self.model_30 = {}
+        self.model_60 = {}
 
-    def load_models(self):
-        """Load trained models and scalers from disk"""
+    def load(self):
         park_ids = [4,8,9,10,20,29,30,31,46,47,62,67,71,72,73,75,76,77,78,80,81,82,84,85,86,87,88,89,90,92,93,94,95,96,97,98,99,101,102,103,104,105,106,108,109,113,114,]
-        base_path = os.path.dirname(__file__)       
+        base_path = os.path.dirname(__file__)
         for park_id in park_ids:
-            model_path = os.path.join(base_path, "models", f"model_park_{park_id}.pkl")
-            scaler_path = os.path.join(base_path, "models", f"scaler_park_{park_id}.pkl")
-            self.models[park_id] = joblib.load(model_path)
-            self.scalers[park_id] = joblib.load(scaler_path)
+            load_30 = joblib.load(os.path.join(base_path, f"models/model_park_{park_id}_30.pkl"))
+            load_60 = joblib.load(os.path.join(base_path, f"models/model_park_{park_id}_60.pkl"))
+            self.model_30[park_id] = load_30
+            self.model_60[park_id] = load_60
 
-    def predict_trend(self, target_datetime, park_id, recent_data, intervals=[30, 60]):
-        """
-        Predict parking trends for specific intervals (in minutes)
+    def predict_trend(self, park_id: int, current_free_spaces: int):
+        current_timestamp = datetime.now()
+        hour = current_timestamp.hour
+        weekday = current_timestamp.weekday()
+        input_data = pd.DataFrame([[hour, weekday, current_free_spaces]], columns=["hour", "weekday", "free_spaces"])
 
-        Parameters:
-        - target_datetime: datetime object for prediction start time
-        - park_id: ID of the parking lot to predict for
-        - recent_data: DataFrame with recent data including prev_spaces and prev_spaces_2
-        - intervals: List of minutes ahead to predict [30, 60] means 30min and 1hr predictions
+        pred_30 = self.model_30[park_id].predict(input_data)[0]
+        pred_60 = self.model_60[park_id].predict(input_data)[0]
 
-        Returns:
-        - Dictionary with predictions and trends
-        """
-        # if park_id not in self.models:
-        #    raise ValueError(f"No model found for parking lot {park_id}")
+        change_30 = round(pred_30 - current_free_spaces)
+        change_60 = round(pred_60 - current_free_spaces)
 
-        # Extract required features
-        hour = target_datetime.hour
-        minute = target_datetime.minute
-        day_of_week = target_datetime.weekday()
-        is_weekend = 1 if day_of_week >= 5 else 0
-
-        # Get last two available spaces values for this parking lot
-        prev_spaces = recent_data  # recent_data['available_spaces'].iloc[-1]
-        prev_spaces_2 = recent_data  # recent_data['available_spaces'].iloc[-2]
-
-        # Create input features
-        X_pred = np.array(
-            [[hour, minute, day_of_week, is_weekend, prev_spaces, prev_spaces_2]]
-        )
-        X_pred_scaled = self.scalers[park_id].transform(X_pred)
-
-        # Current prediction
-        current_prediction = self.models[park_id].predict(X_pred_scaled)[0]
+        trend_30 = "emptier" if change_30 > 0 else ("fuller" if change_30 < 0 else "steady")
+        trend_60 = "emptier" if change_60 > 0 else ("fuller" if change_60 < 0 else "steady")
 
         results = {
             "park_id": park_id,
-            "current_spaces": prev_spaces,
-            "current_prediction": current_prediction,
-            "forecasts": [],
+            "current_spaces": current_free_spaces,
+            "trend30": trend_30,
+            "trend60": trend_60,
+            "change30": change_30,
+            "change60": change_60,
         }
 
-        # Predict for each interval
-        for interval in intervals:
-            future_time = target_datetime + timedelta(minutes=interval)
-            future_hour = future_time.hour
-            future_minute = future_time.minute
-
-            # For future predictions, use predictions as previous values
-            X_future = np.array(
-                [
-                    [
-                        future_hour,
-                        future_minute,
-                        day_of_week,
-                        is_weekend,
-                        current_prediction,
-                        prev_spaces,
-                    ]
-                ]
-            )
-            X_future_scaled = self.scalers[park_id].transform(X_future)
-            future_prediction = self.models[park_id].predict(X_future_scaled)[0]
-
-            # Calculate trend (positive means more available spaces, negative means fewer)
-            trend = round(future_prediction - prev_spaces)
-            #trend_percentage = math.ceil((trend / prev_spaces) * 100 if prev_spaces > 0 else 0)
-
-            if trend > 0:
-                trend_description = "emptier"
-            elif trend < 0:
-                trend_description = "fuller"
-            else:
-                trend_description = "steady"
-
-            results["forecasts"].append(
-                {
-                    "interval_minutes": interval,
-                    "prediction": future_prediction,
-                    "absolute_change": trend,
-                    #"percentage_change": trend_percentage,
-                    "trend": trend_description,
-                }
-            )
-
-            # Update for next interval prediction
-            current_prediction = future_prediction
-
         return results
-    
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup event
-    app.state.forecaster = ParkingForecaster()
-    app.state.forecaster.load_models()
+    app.state.forecaster = Forecaster()
+    app.state.forecaster.load()
     yield
-    # Shutdown event (optional cleanup)
     del app.state.forecaster
 
 app = FastAPI(lifespan=lifespan)
@@ -130,24 +63,7 @@ app.add_middleware(
 )
 
 @app.get("/api/forecast")
-def forecast(id: str, current_ava: int):
-    """
-    Forecast available parking spaces for a given parking lot ID and current available spaces.
-
-    Parameters:
-    - id: ID of the parking lot
-    - current_ava: Current available spaces in the parking lot
-
-    Returns:
-    - JSON response with forecasted values
-    """
-    # Get the current datetime
-    now = datetime.now()
-
-    # Load the forecaster from the app state
+def forecast(park_id: int, current_free_spaces: int):
     forecaster = app.state.forecaster
-
-    # Predict trends
-    prediction = forecaster.predict_trend(now, int(id), current_ava)
-
+    prediction = forecaster.predict_trend(park_id, current_free_spaces)
     return prediction
